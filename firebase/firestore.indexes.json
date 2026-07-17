@@ -1,0 +1,19 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "couponCodes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "eventKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

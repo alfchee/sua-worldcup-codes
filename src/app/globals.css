@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07180a;
+  --foreground: #f8fff9;
 }
 
 @theme inline {
@@ -12,15 +12,108 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.pitch-background {
+  background:
+    radial-gradient(circle at top center, rgba(248, 255, 204, 0.28), transparent 26%),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 0, rgba(255, 255, 255, 0.08) 1.5%, transparent 1.5%, transparent 20%, rgba(255, 255, 255, 0.05) 20%, rgba(255, 255, 255, 0.05) 40%, transparent 40%, transparent 60%, rgba(255, 255, 255, 0.05) 60%, rgba(255, 255, 255, 0.05) 80%, transparent 80%, transparent 100%),
+    linear-gradient(180deg, #226019 0%, #1d5d18 30%, #0d430f 100%);
+  filter: saturate(1.05);
+}
+
+.pitch-glow {
+  background:
+    radial-gradient(circle at 50% 12%, rgba(255, 248, 189, 0.85), transparent 18%),
+    radial-gradient(circle at 50% 30%, rgba(255, 247, 204, 0.18), transparent 35%);
+  mix-blend-mode: screen;
+  opacity: 0.9;
+}
+
+.goal-frame::before,
+.goal-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 4px solid rgba(255, 255, 255, 0.9);
+  border-bottom: 0;
+}
+
+.goal-frame::after {
+  inset: 22px 12px auto;
+  height: 12px;
+  border-width: 0 0 4px;
+}
+
+.glass-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.08));
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(18px);
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -10%;
+  width: 0.85rem;
+  height: 1.45rem;
+  background:
+    linear-gradient(180deg, rgba(255, 234, 120, 0.95), rgba(255, 175, 43, 0.95));
+  border-radius: 0.25rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  opacity: 0.9;
+  transform: rotate(var(--confetti-rotate));
+  animation-name: confetti-fall;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+
+.confetti-piece:nth-child(3n) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(233, 255, 235, 0.8));
+}
+
+.confetti-piece:nth-child(4n) {
+  background: linear-gradient(180deg, rgba(255, 214, 94, 0.95), rgba(255, 148, 0, 0.9));
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(var(--confetti-rotate));
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 0.95;
+  }
+
+  100% {
+    transform: translate3d(var(--confetti-drift), 120vh, 0)
+      rotate(calc(var(--confetti-rotate) + 320deg));
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    opacity: 0.35;
+  }
 }

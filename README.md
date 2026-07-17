@@ -1,36 +1,117 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Códigos De Gol | Súa Hair Salon
 
-## Getting Started
+Sitio de cupones en vivo para `Súa Hair Salon` durante la final del evento mundialista.
 
-First, run the development server:
+- La página pública muestra todos los códigos activos.
+- El panel `/admin` permite iniciar sesión con Firebase Auth.
+- Las cuentas administradoras pueden publicar un nuevo código de 5 caracteres.
+- Cada código dura 2 minutos desde su publicación.
+- El historial queda almacenado para validación en tienda.
+
+## Stack Actual
+
+- `Next.js` con `TypeScript`
+- `Firebase Firestore` para cupones e historial
+- `Firebase Auth` para autenticación
+- `Firebase Admin SDK` para sesiones seguras en el servidor
+- `Tailwind CSS` para la interfaz
+
+## Rutas
+
+- `/` pantalla pública con diseño futbolero y confeti CSS
+- `/admin` panel autenticado para administradores y personal
+- `/api/public/coupons` feed público de cupones activos
+- `/api/auth/session` creación, consulta y cierre de sesión
+- `/api/admin/coupons` historial y publicación de cupones
+
+## Configuración Local
+
+1. Instala dependencias:
+
+```bash
+npm install
+```
+
+2. Copia el archivo de ejemplo:
+
+```bash
+cp .env.example .env.local
+```
+
+3. Completa en `.env.local`:
+
+- configuración web de Firebase
+- credenciales de Firebase Admin
+- `FIREBASE_ADMIN_EMAILS` con los correos que deben ser administradores
+
+4. Ejecuta el proyecto:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Variables De Entorno
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+El archivo seguro para compartir en el repo es [`.env.example`](file:///home/alfchee/Workspace/own/worldcup-code/.env.example).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Los secretos reales deben vivir solo en:
 
-## Learn More
+- `.env.local`
+- variables de entorno de Vercel
 
-To learn more about Next.js, take a look at the following resources:
+## Archivos De Firebase
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Archivos relevantes para provisión y seguridad:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- [firestore.rules](file:///home/alfchee/Workspace/own/worldcup-code/firebase/firestore.rules)
+- [firestore.indexes.json](file:///home/alfchee/Workspace/own/worldcup-code/firebase/firestore.indexes.json)
+- [.env.example](file:///home/alfchee/Workspace/own/worldcup-code/.env.example)
+- [IMPLEMENTATION_PLAN.md](file:///home/alfchee/Workspace/own/worldcup-code/IMPLEMENTATION_PLAN.md)
 
-## Deploy on Vercel
+## Seguridad Para Hacer Push
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Puedes hacer push del proyecto sin exponer secretos si mantienes esta regla:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- sí se sube `.env.example`
+- no se sube `.env`
+- no se sube `.env.local`
+- no se suben archivos JSON de service account de Firebase
+- no se sube `.vercel`
+
+El `.gitignore` ya protege:
+
+- `.env`
+- `.env.local`
+- `.env.*.local`
+- `firebase-service-account*.json`
+- `service-account*.json`
+- `serviceAccountKey*.json`
+- `.vercel`
+
+Antes de hacer push, revisa:
+
+```bash
+git status --short
+```
+
+Y confirma que no aparezcan archivos como:
+
+```text
+.env
+.env.local
+firebase-service-account.json
+service-account.json
+```
+
+## Checklist Antes De Subir
+
+1. Verifica que `.env.local` no esté trackeado.
+2. Usa solo valores placeholder en `.env.example`.
+3. Revisa `git status --short`.
+4. Asegúrate de que no haya claves privadas pegadas en `README`, código o commits.
+5. Luego haz tu `git add`, `commit` y `push`.
+
+## Validación
+
+- `npm run lint`
+- `npm run build`
