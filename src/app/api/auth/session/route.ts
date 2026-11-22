@@ -37,7 +37,8 @@ export async function POST(request: Request) {
   }
 
   const payload = (await request.json()) as SessionRequestPayload;
-  const idToken = payload.idToken?.trim() ?? "";
+  const idToken =
+    typeof payload.idToken === "string" ? payload.idToken.trim() : "";
 
   if (!idToken) {
     return NextResponse.json(

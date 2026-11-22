@@ -6,15 +6,19 @@ import {
   signOut,
 } from "firebase/auth";
 
+import { HISTORY_LIMIT } from "@/lib/config";
+import { formatLongDate } from "@/lib/dates";
 import type {
-  AdminCouponsResponse,
-  CouponRecord,
-  PublishCouponResponse,
+  AdminPassportsResponse,
+  PassportRecord,
   SessionResponse,
   SessionUser,
   StorageMode,
 } from "@/lib/types";
 import { getFirebaseClientAuth } from "@/lib/firebase/client";
+import { PassportsHistoryPanel } from "@/components/passports-history-panel";
+import { RedeemPassportPanel } from "@/components/redeem-passport-panel";
+import { SellPassportPanel } from "@/components/sell-passport-panel";
 
 interface AdminDashboardProps {
   firebaseAdminConfigured: boolean;
@@ -22,22 +26,10 @@ interface AdminDashboardProps {
   initialSessionUser: SessionUser | null;
 }
 
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat("es-NI", {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value));
-}
-
-function getCouponStatus(expiresAt: string): "Activo" | "Expirado" {
-  return Date.parse(expiresAt) > Date.now() ? "Activo" : "Expirado";
-}
+type PanelTab = "vender" | "canjear" | "historial";
 
 function getStorageModeLabel(storageMode: StorageMode): string {
-  return storageMode === "firebase" ? "Firebase" : "Memoria";
+  return storageMode === "firebase" ? "Firebase" : "Memoria (local)";
 }
 
 function getRoleLabel(role: SessionUser["role"]): string {
@@ -52,19 +44,21 @@ export function AdminDashboard({
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(initialSessionUser);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [coupons, setCoupons] = useState<CouponRecord[]>([]);
+  const [tab, setTab] = useState<PanelTab>("vender");
+
+  const [passports, setPassports] = useState<PassportRecord[]>([]);
+  const [windows, setWindows] = useState<AdminPassportsResponse["windows"] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [storageMode, setStorageMode] = useState<StorageMode>(
     firebaseAdminConfigured ? "firebase" : "memory",
   );
   const [isLoading, setIsLoading] = useState(Boolean(initialSessionUser));
   const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [isPublishing, setIsPublishing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const isFirebaseReady = firebaseClientConfigured && firebaseAdminConfigured;
-  const canPublish = sessionUser?.role === "admin";
 
-  const loadCoupons = useCallback(async () => {
+  const loadPassports = useCallback(async () => {
     if (!sessionUser) {
       return;
     }
@@ -72,19 +66,21 @@ export function AdminDashboard({
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/admin/coupons", { cache: "no-store" });
+      const response = await fetch("/api/admin/passports", { cache: "no-store" });
 
       if (!response.ok) {
-        throw new Error("No se pudo cargar el historial de cupones.");
+        throw new Error("No se pudo cargar el historial de pasaportes.");
       }
 
-      const payload = (await response.json()) as AdminCouponsResponse;
+      const payload = (await response.json()) as AdminPassportsResponse;
 
-      setCoupons(payload.coupons);
+      setPassports(payload.passports);
       setStorageMode(payload.storageMode);
-      setErrorMessage("");
+      setWindows(payload.windows);
+      setTruncated(payload.truncated);
+      setAuthMessage("");
     } catch (error) {
-      setErrorMessage(
+      setAuthMessage(
         error instanceof Error ? error.message : "Ocurrió un error inesperado al cargar.",
       );
     } finally {
@@ -98,18 +94,40 @@ export function AdminDashboard({
     }
 
     const initialLoad = window.setTimeout(() => {
-      void loadCoupons();
+      void loadPassports();
     }, 0);
 
     return () => {
       window.clearTimeout(initialLoad);
     };
-  }, [loadCoupons, sessionUser]);
+  }, [loadPassports, sessionUser]);
 
-  const activeCoupons = useMemo(
-    () => coupons.filter((coupon) => getCouponStatus(coupon.expiresAt) === "Activo"),
-    [coupons],
-  );
+  const stats = useMemo(() => {
+    const total = passports.length;
+    const redeemed = passports.filter((passport) => passport.status === "redeemed").length;
+    const pending = total - redeemed;
+    const blackend = passports.filter((passport) => passport.type === "blackend").length;
+
+    return { total, redeemed, pending, blackend, vip: total - blackend };
+  }, [passports]);
+
+  const saleRangeLabel = windows
+    ? `Venta ${formatLongDate(windows.saleStart)} – ${formatLongDate(windows.saleEnd)} · Canje ${formatLongDate(windows.redemptionStart)} – ${formatLongDate(windows.redemptionEnd)}`
+    : "Venta 23–28 de noviembre · Canje 1–31 de diciembre";
+
+  function handleIssued(passport: PassportRecord, mode: StorageMode) {
+    setPassports((current) => [passport, ...current].slice(0, HISTORY_LIMIT));
+    setStorageMode(mode);
+    setTab("vender");
+  }
+
+  function handleRedeemed(passport: PassportRecord) {
+    setPassports((current) =>
+      current.map((candidate) =>
+        candidate.id === passport.id ? passport : candidate,
+      ),
+    );
+  }
 
   async function createServerSession(idToken: string): Promise<SessionUser> {
     const response = await fetch("/api/auth/session", {
@@ -132,13 +150,12 @@ export function AdminDashboard({
   async function handleEmailAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsAuthenticating(true);
-    setErrorMessage("");
+    setAuthMessage("");
     setSuccessMessage("");
 
     try {
       const auth = getFirebaseClientAuth();
       const credential = await signInWithEmailAndPassword(auth, email, password);
-
       const session = await createServerSession(await credential.user.getIdToken(true));
 
       setSessionUser(session);
@@ -146,7 +163,7 @@ export function AdminDashboard({
       setPassword("");
       setSuccessMessage("Sesión iniciada correctamente.");
     } catch (error) {
-      setErrorMessage(
+      setAuthMessage(
         error instanceof Error ? error.message : "Falló la autenticación con Firebase.",
       );
     } finally {
@@ -154,88 +171,45 @@ export function AdminDashboard({
     }
   }
 
-  async function handlePublish() {
-    setIsPublishing(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    if (!sessionUser || !canPublish) {
-      setErrorMessage("Solo los administradores pueden publicar cupones.");
-      setIsPublishing(false);
-      return;
-    }
-
-    try {
-      const response = await fetch("/api/admin/coupons", {
-        method: "POST",
-      });
-
-      const payload = (await response.json()) as PublishCouponResponse & {
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? "No se pudo publicar el cupón.");
-      }
-
-      setCoupons((current) => [payload.coupon, ...current].slice(0, 12));
-      setStorageMode(payload.storageMode);
-      setSuccessMessage(`El cupón ${payload.coupon.code} ya está activo por 2 minutos.`);
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "No se pudo publicar el cupón.",
-      );
-    } finally {
-      setIsPublishing(false);
-    }
-  }
-
   async function handleLogout() {
     await fetch("/api/auth/session", { method: "DELETE" });
     await signOut(getFirebaseClientAuth());
     setSessionUser(null);
-    setCoupons([]);
+    setPassports([]);
+    setWindows(null);
     setSuccessMessage("");
-    setErrorMessage("");
+    setAuthMessage("");
   }
 
-  return (
-    <main className="min-h-screen bg-[#07180a] px-4 py-10 text-white sm:px-6 lg:px-8">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-        <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur">
-          <p className="text-sm font-semibold uppercase tracking-[0.35em] text-emerald-200/80">
-            Panel Administrativo
-          </p>
-          <h1 className="mt-3 text-4xl font-black tracking-[0.08em] text-white sm:text-5xl">
-            Control De Cupones Por Gol
-          </h1>
-          <p className="mt-4 max-w-3xl text-sm leading-7 text-white/75">
-            Inicia sesión con Firebase Auth para acceder a las operaciones de cupones.
-            Los administradores pueden publicar nuevos cupones de 5 caracteres por gol,
-            mientras el personal puede revisar el historial para validación en tienda.
-          </p>
-        </section>
-
-        {!firebaseClientConfigured || !firebaseAdminConfigured ? (
-          <section className="rounded-[2rem] border border-amber-300/30 bg-amber-500/10 p-6 text-amber-100 shadow-[0_24px_60px_rgba(0,0,0,0.25)]">
-            <h2 className="text-xl font-bold">Falta configuración de Firebase</h2>
-            <p className="mt-3 text-sm leading-7 text-amber-100/85">
-              Agrega la configuración web de Firebase y las credenciales de la cuenta de
-              servicio de Firebase Admin en `.env.local` y Vercel antes de usar este panel.
+  if (!sessionUser) {
+    return (
+      <main className="min-h-screen bg-[#0d0b08] px-4 py-10 text-white sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+          <section className="rounded-[2rem] border border-amber-200/15 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur sm:p-8">
+            <p className="text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">
+              Blackend Week VIP · Uso interno
+            </p>
+            <h1 className="mt-3 text-4xl font-black tracking-[0.04em] text-white sm:text-5xl">
+              Pasaportes VIP · Súa Hair Salon
+            </h1>
+            <p className="mt-4 max-w-3xl text-sm leading-7 text-white/70">
+              Panel interno para vender Pasaportes VIP (50% y 40%), entregarlos por
+              WhatsApp y canjearlos en recepción entre el 1 y el 31 de diciembre.
             </p>
           </section>
-        ) : null}
 
-        {!sessionUser ? (
-          <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur sm:p-8">
-            <h2 className="text-2xl font-bold">Ingreso Administrativo</h2>
-            <p className="mt-3 text-sm leading-7 text-white/75">
-              Inicia sesión con una cuenta existente de Firebase Auth por correo y
-              contraseña. Las cuentas cuyo correo esté en `FIREBASE_ADMIN_EMAILS`
-              se convierten automáticamente en administradores; las demás tendrán acceso
-              de personal.
-            </p>
+          {!firebaseClientConfigured || !firebaseAdminConfigured ? (
+            <section className="rounded-[2rem] border border-amber-300/30 bg-amber-500/10 p-6 text-amber-100 shadow-[0_24px_60px_rgba(0,0,0,0.25)]">
+              <h2 className="text-xl font-bold">Falta configuración de Firebase</h2>
+              <p className="mt-3 text-sm leading-7 text-amber-100/85">
+                Agrega la configuración web de Firebase y las credenciales de la cuenta de
+                servicio de Firebase Admin en `.env.local` y Vercel antes de usar este panel.
+              </p>
+            </section>
+          ) : null}
 
+          <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur sm:p-8">
+            <h2 className="text-2xl font-bold">Ingreso del personal</h2>
             <form className="mt-6 flex flex-col gap-4 sm:max-w-md" onSubmit={handleEmailAuth}>
               <label className="text-sm font-semibold uppercase tracking-[0.24em] text-white/70">
                 Correo
@@ -244,8 +218,8 @@ export function AdminDashboard({
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                className="rounded-2xl border border-white/15 bg-black/20 px-4 py-4 text-lg text-white outline-none ring-0 placeholder:text-white/35 focus:border-emerald-300/60"
-                placeholder="admin@sua.com"
+                className="rounded-2xl border border-white/15 bg-black/30 px-4 py-4 text-lg text-white outline-none ring-0 placeholder:text-white/35 focus:border-amber-200/60"
+                placeholder="personal@sua.com"
                 autoComplete="email"
               />
               <label className="text-sm font-semibold uppercase tracking-[0.24em] text-white/70">
@@ -255,13 +229,13 @@ export function AdminDashboard({
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="rounded-2xl border border-white/15 bg-black/20 px-4 py-4 text-lg text-white outline-none ring-0 placeholder:text-white/35 focus:border-emerald-300/60"
+                className="rounded-2xl border border-white/15 bg-black/30 px-4 py-4 text-lg text-white outline-none ring-0 placeholder:text-white/35 focus:border-amber-200/60"
                 placeholder="Ingresa tu contraseña"
                 autoComplete="current-password"
               />
               <button
                 type="submit"
-                className="rounded-2xl bg-emerald-400 px-5 py-4 text-sm font-black uppercase tracking-[0.25em] text-[#09270f] transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl bg-amber-300 px-5 py-4 text-sm font-black uppercase tracking-[0.25em] text-[#241a05] transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={
                   !isFirebaseReady
                   || !email.trim()
@@ -269,150 +243,119 @@ export function AdminDashboard({
                   || isAuthenticating
                 }
               >
-                {isAuthenticating
-                  ? "Autenticando..."
-                  : "Continuar con correo"}
+                {isAuthenticating ? "Autenticando..." : "Continuar con correo"}
               </button>
             </form>
           </section>
-        ) : (
-          <>
-            <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-              <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-white/60">
-                      Acciones En Vivo
-                    </p>
-                    <h2 className="mt-2 text-2xl font-bold">Publicar cupón por gol</h2>
-                    <p className="mt-2 text-sm text-white/65">
-                      Sesión iniciada como {sessionUser.email ?? sessionUser.uid} ({getRoleLabel(sessionUser.role)})
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-white/70 transition hover:border-white/30 hover:text-white"
-                  >
-                    Cerrar sesión
-                  </button>
-                </div>
 
-                <button
-                  type="button"
-                  onClick={handlePublish}
-                  disabled={isPublishing || !canPublish}
-                  className="mt-6 w-full rounded-[1.75rem] bg-emerald-400 px-6 py-6 text-lg font-black uppercase tracking-[0.25em] text-[#09270f] shadow-[0_22px_50px_rgba(16,185,129,0.35)] transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {isPublishing
-                    ? "Publicando..."
-                    : canPublish
-                      ? "Generar cupón en vivo"
-                      : "El personal no puede publicar cupones"}
-                </button>
+          {authMessage ? (
+            <div className="rounded-[1.5rem] border border-red-300/35 bg-red-500/15 px-5 py-4 text-sm text-red-100">
+              {authMessage}
+            </div>
+          ) : null}
+        </div>
+      </main>
+    );
+  }
 
-                <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-[1.5rem] bg-white/6 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/60">
-                      Activos ahora
-                    </p>
-                    <div className="mt-2 text-4xl font-black">{activeCoupons.length}</div>
-                  </div>
-                  <div className="rounded-[1.5rem] bg-white/6 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/60">
-                      Modo de almacenamiento
-                    </p>
-                    <div className="mt-2 text-2xl font-black uppercase">{getStorageModeLabel(storageMode)}</div>
-                  </div>
-                </div>
-              </div>
+  return (
+    <main className="min-h-screen bg-[#0d0b08] px-4 py-10 text-white sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
+        <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.35em] text-amber-200/80">
+                Blackend Week VIP · Panel interno
+              </p>
+              <h1 className="mt-2 text-3xl font-black text-white sm:text-4xl">
+                Pasaportes VIP · Súa Hair Salon
+              </h1>
+              <p className="mt-2 text-sm text-white/65">
+                Sesión iniciada como {sessionUser.email ?? sessionUser.uid} ({getRoleLabel(sessionUser.role)}) ·
+                Almacenamiento: {getStorageModeLabel(storageMode)}
+              </p>
+              <p className="mt-1 text-xs text-white/55">{saleRangeLabel}</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-white/70 transition hover:border-white/30 hover:text-white"
+            >
+              Cerrar sesión
+            </button>
+          </div>
 
-              <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur">
-                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-white/60">
-                  Recordatorio Para El Personal
-                </p>
-                <p className="mt-4 text-sm leading-7 text-white/75">
-                  Los clientes solo pueden canjear un código válido en persona. El
-                  personal debe usar este historial para confirmar que el código existió
-                  durante el evento. Solo las cuentas administradoras pueden generar
-                  nuevos códigos.
-                </p>
-              </div>
-            </section>
+          {storageMode === "memory" ? (
+            <div className="mt-4 rounded-[1.5rem] border border-amber-300/30 bg-amber-500/10 px-5 py-4 text-sm text-amber-100">
+              Modo memoria local (desarrollo): los pasaportes no se comparten entre
+              instancias ni persisten. Configura Firebase Admin para producción; el canje
+              único solo es exigible con Firebase.
+            </div>
+          ) : null}
 
-            <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-white/60">
-                    Historial De Cupones
-                  </p>
-                  <h2 className="mt-2 text-2xl font-bold">Códigos generados recientemente</h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void loadCoupons()}
-                  className="rounded-full border border-white/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-white/70 transition hover:border-white/30 hover:text-white"
-                >
-                  Actualizar
-                </button>
-              </div>
+          <div className="mt-6 grid gap-4 sm:grid-cols-4">
+            <div className="rounded-[1.5rem] bg-white/6 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/60">Emitidos</p>
+              <div className="mt-2 text-3xl font-black">{stats.total}</div>
+            </div>
+            <div className="rounded-[1.5rem] bg-white/6 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/60">Pendientes</p>
+              <div className="mt-2 text-3xl font-black text-amber-200">{stats.pending}</div>
+            </div>
+            <div className="rounded-[1.5rem] bg-white/6 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/60">Canjeados</p>
+              <div className="mt-2 text-3xl font-black text-emerald-300">{stats.redeemed}</div>
+            </div>
+            <div className="rounded-[1.5rem] bg-white/6 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/60">Tipo Blackend</p>
+              <div className="mt-2 text-3xl font-black">{stats.blackend}</div>
+            </div>
+          </div>
+        </section>
 
-              <div className="mt-6 overflow-hidden rounded-[1.5rem] border border-white/10">
-                <table className="min-w-full divide-y divide-white/10 text-left text-sm">
-                  <thead className="bg-white/6 text-xs font-semibold uppercase tracking-[0.22em] text-white/70">
-                    <tr>
-                      <th className="px-4 py-4">Código</th>
-                      <th className="px-4 py-4">Creado</th>
-                      <th className="px-4 py-4">Vence</th>
-                      <th className="px-4 py-4">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/10 bg-black/10">
-                    {coupons.map((coupon) => {
-                      const status = getCouponStatus(coupon.expiresAt);
+        <nav className="flex flex-wrap gap-3">
+          {(
+            [
+              ["vender", "Vender pasaporte"],
+              ["canjear", "Canjear en recepción"],
+              ["historial", "Historial"],
+            ] as Array<[PanelTab, string]>
+          ).map(([tabId, label]) => (
+            <button
+              key={tabId}
+              type="button"
+              onClick={() => setTab(tabId)}
+              className={`rounded-full px-5 py-3 text-xs font-bold uppercase tracking-[0.22em] transition ${
+                tab === tabId
+                  ? "bg-amber-300 text-[#241a05]"
+                  : "border border-white/15 text-white/70 hover:border-white/30 hover:text-white"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
 
-                      return (
-                        <tr key={coupon.id}>
-                          <td className="px-4 py-4 text-lg font-black uppercase tracking-[0.25em] text-emerald-200">
-                            {coupon.code}
-                          </td>
-                          <td className="px-4 py-4 text-white/75">
-                            {formatDateTime(coupon.createdAt)}
-                          </td>
-                          <td className="px-4 py-4 text-white/75">
-                            {formatDateTime(coupon.expiresAt)}
-                          </td>
-                          <td className="px-4 py-4">
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${
-                                status === "Activo"
-                                  ? "bg-emerald-400/15 text-emerald-200"
-                                  : "bg-white/8 text-white/60"
-                              }`}
-                            >
-                              {status}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {!isLoading && coupons.length === 0 ? (
-                      <tr>
-                        <td className="px-4 py-6 text-white/70" colSpan={4}>
-                          Aún no se han generado cupones.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
-        )}
+        {tab === "vender" ? (
+          <SellPassportPanel windows={windows} onIssued={handleIssued} />
+        ) : null}
 
-        {errorMessage ? (
+        {tab === "canjear" ? (
+          <RedeemPassportPanel onRedeemed={handleRedeemed} />
+        ) : null}
+
+        {tab === "historial" ? (
+          <PassportsHistoryPanel
+            passports={passports}
+            isLoading={isLoading}
+            truncated={truncated}
+            onRefresh={() => void loadPassports()}
+          />
+        ) : null}
+
+        {authMessage ? (
           <div className="rounded-[1.5rem] border border-red-300/35 bg-red-500/15 px-5 py-4 text-sm text-red-100">
-            {errorMessage}
+            {authMessage}
           </div>
         ) : null}
 

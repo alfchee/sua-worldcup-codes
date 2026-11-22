@@ -1,15 +1,15 @@
 {
   "indexes": [
     {
-      "collectionGroup": "couponCodes",
+      "collectionGroup": "vipPassports",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "eventKey",
+          "fieldPath": "promoKey",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "createdAt",
+          "fieldPath": "purchasedAt",
           "order": "DESCENDING"
         }
       ]
