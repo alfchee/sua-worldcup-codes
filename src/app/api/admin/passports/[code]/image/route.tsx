@@ -1,35 +1,25 @@
 import { ImageResponse } from "next/og";
+import { NextResponse } from "next/server";
 
-import { getSessionUser } from "@/lib/auth";
+import { requireSessionUser } from "@/lib/auth-helpers";
+import { formatLongDate } from "@/lib/dates";
 import { lookupPassport } from "@/lib/passports";
+import {
+  PASSPORT_ACCENTS,
+  TICKET_IMAGE_HEIGHT,
+  TICKET_IMAGE_WIDTH,
+} from "@/lib/passport-view";
+import { RATE_LIMITS, checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { PassportRecord } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const ACCENTS: Record<string, { strong: string; soft: string; badge: string }> = {
-  blackend: {
-    strong: "#f5c56b",
-    soft: "#f7dfae",
-    badge: "#1c1408",
-  },
-  vip: {
-    strong: "#b9e0c5",
-    soft: "#e2f2e8",
-    badge: "#0b1d12",
-  },
-};
-
 function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat("es-NI", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    timeZone: "America/Managua",
-  }).format(new Date(iso));
+  return formatLongDate(iso);
 }
 
 function Ticket({ passport }: { passport: PassportRecord }) {
-  const accent = ACCENTS[passport.type] ?? ACCENTS.vip;
+  const accent = PASSPORT_ACCENTS[passport.type] ?? PASSPORT_ACCENTS.vip;
 
   return (
     <div
@@ -52,14 +42,13 @@ function Ticket({ passport }: { passport: PassportRecord }) {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 14,
             fontSize: 26,
             letterSpacing: 12,
             color: "#c9b98a",
             textTransform: "uppercase",
           }}
         >
-          Súa Hair Salon
+          {"SÚA HAIR SALON"}
         </div>
         <div
           style={{
@@ -107,7 +96,7 @@ function Ticket({ passport }: { passport: PassportRecord }) {
             textTransform: "uppercase",
           }}
         >
-          de descuento
+          {"DE DESCUENTO"}
         </div>
         <div
           style={{
@@ -117,7 +106,7 @@ function Ticket({ passport }: { passport: PassportRecord }) {
             letterSpacing: 4,
           }}
         >
-          Blackend Week VIP
+          {"Blackend Week VIP"}
         </div>
       </div>
 
@@ -141,16 +130,10 @@ function Ticket({ passport }: { passport: PassportRecord }) {
           }}
         >
           <div style={{ fontSize: 22, letterSpacing: 10, color: "#c9b98a", textTransform: "uppercase" }}>
-            Código de canje
+            {"CÓDIGO DE CANJE"}
           </div>
           <div
-            style={{
-              marginTop: 14,
-              fontSize: 86,
-              fontWeight: 800,
-              letterSpacing: 22,
-              color: "#fdfaf2",
-            }}
+            style={{ marginTop: 14, fontSize: 86, fontWeight: 800, letterSpacing: 22, color: "#fdfaf2" }}
           >
             {passport.code}
           </div>
@@ -162,18 +145,17 @@ function Ticket({ passport }: { passport: PassportRecord }) {
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            gap: 12,
             textAlign: "center",
           }}
         >
           <div style={{ fontSize: 30, color: "#f1e9d8" }}>
             {passport.clientName}
           </div>
-          <div style={{ fontSize: 22, color: "#a99f8a" }}>
+          <div style={{ marginTop: 12, fontSize: 22, color: "#a99f8a" }}>
             {`Canjeable del ${formatDate(passport.validFrom)} al ${formatDate(passport.validUntil)}`}
           </div>
-          <div style={{ fontSize: 20, color: "#8f8672", letterSpacing: 2 }}>
-            Presenta este código en Súa Hair Salon · Canje único
+          <div style={{ marginTop: 12, fontSize: 20, color: "#8f8672", letterSpacing: 2 }}>
+            {"Presenta este código en Súa Hair Salon · Canje único"}
           </div>
         </div>
       </div>
@@ -182,17 +164,37 @@ function Ticket({ passport }: { passport: PassportRecord }) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ code: string }> },
 ) {
   const { code } = await context.params;
-  const sessionUser = await getSessionUser();
+  const sessionUser = await requireSessionUser();
 
-  if (!sessionUser) {
-    return new Response("No autorizado.", { status: 401 });
+  if (sessionUser instanceof NextResponse) {
+    return sessionUser;
   }
 
-  const lookup = await lookupPassport(code);
+  const ip = getClientIp(request);
+  const rate = checkRateLimit(
+    `image:${ip}`,
+    RATE_LIMITS.image.limit,
+    RATE_LIMITS.image.windowMs,
+  );
+
+  if (!rate.allowed) {
+    return new Response("Demasiadas solicitudes. Espera un momento.", {
+      status: 429,
+      headers: { "Retry-After": String(rate.retryAfterSeconds) },
+    });
+  }
+
+  let lookup: Awaited<ReturnType<typeof lookupPassport>>;
+
+  try {
+    lookup = await lookupPassport(code);
+  } catch {
+    return new Response("No se pudo generar la imagen del pasaporte.", { status: 500 });
+  }
 
   if (!lookup.passport) {
     return new Response("Pasaporte no encontrado.", { status: 404 });
@@ -200,10 +202,12 @@ export async function GET(
 
   try {
     return new ImageResponse(<Ticket passport={lookup.passport} />, {
-      width: 1080,
-      height: 1350,
+      width: TICKET_IMAGE_WIDTH,
+      height: TICKET_IMAGE_HEIGHT,
       headers: {
-        "Cache-Control": "no-store",
+        // El contenido por código es inmutable (los datos impresos no cambian
+        // con el estado), pero contiene PII: solo caché privada del navegador.
+        "Cache-Control": "private, max-age=3600",
       },
     });
   } catch {

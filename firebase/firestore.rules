@@ -15,17 +15,11 @@ service cloud.firestore {
       return hasRole('staff') || hasRole('admin');
     }
 
-    match /couponCodes/{couponId} {
-      allow read: if resource.data.expiresAt > request.time || isStaffOrAdmin();
-      allow create, update, delete: if hasRole('admin');
-    }
-
+    // Todas las operaciones de pasaportes pasan por el Admin SDK (rutas API
+    // con verificación de rol en servidor). El cliente nunca escribe directo:
+    // así se exigen ventana de venta, validación, unicidad y canje único.
     match /vipPassports/{passportId} {
-      allow read: if isStaffOrAdmin();
-      allow create: if isStaffOrAdmin();
-      // El canje (update) y el resto de cambios sensibles pasan por el Admin SDK,
-      // que verifica el rol en el código de servidor; el cliente no actualiza directo.
-      allow update, delete: if false;
+      allow read, create, update, delete: if false;
     }
 
     match /users/{userId} {

@@ -47,6 +47,9 @@ serviceAccountKey*.json
 # vercel
 .vercel
 
+# agent session artifacts
+.opencode/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

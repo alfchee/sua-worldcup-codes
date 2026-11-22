@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import {
+  CODE_RETRY_ATTEMPTS,
   PASSPORT_CODE_LENGTH,
   PASSPORT_TYPES,
   REDEMPTION_WINDOW_END,
@@ -19,6 +20,7 @@ import type {
   PassportStatus,
   PassportStoreRecord,
   PassportTypeId,
+  PromoWindows,
   SessionUser,
   StorageMode,
 } from "@/lib/types";
@@ -28,6 +30,21 @@ declare global {
 }
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+const VALID_STATUSES: ReadonlySet<string> = new Set([
+  "purchased",
+  "redeemed",
+  "void",
+]);
+
+export function getPromoWindows(): PromoWindows {
+  return {
+    saleStart: SALE_WINDOW_START.toISOString(),
+    saleEnd: SALE_WINDOW_END.toISOString(),
+    redemptionStart: REDEMPTION_WINDOW_START.toISOString(),
+    redemptionEnd: REDEMPTION_WINDOW_END.toISOString(),
+  };
+}
 
 function getMemoryStore(): PassportStoreRecord[] {
   if (!globalThis.__vipPassports) {
@@ -50,22 +67,8 @@ function generatePassportCode(): string {
 
 function toPassportRecord(record: PassportStoreRecord): PassportRecord {
   return {
-    id: record.id,
-    code: record.code,
-    type: record.type,
+    ...record,
     typeLabel: PASSPORT_TYPES[record.type].label,
-    discountPercent: record.discountPercent,
-    clientName: record.clientName,
-    clientPhone: record.clientPhone,
-    status: record.status,
-    purchasedAt: record.purchasedAt,
-    validFrom: record.validFrom,
-    validUntil: record.validUntil,
-    createdByUid: record.createdByUid,
-    createdByEmail: record.createdByEmail,
-    redeemedAt: record.redeemedAt,
-    redeemedByEmail: record.redeemedByEmail,
-    promoKey: record.promoKey,
   };
 }
 
@@ -76,24 +79,17 @@ interface CreatePassportOptions {
   sessionUser: SessionUser | null;
 }
 
-function createRecord(options: {
-  code: string;
-  type: PassportTypeId;
-  clientName: string;
-  clientPhone: string;
-  sessionUser: SessionUser | null;
-}): PassportStoreRecord {
+function buildRecord(options: CreatePassportOptions & { code: string }): PassportStoreRecord {
   const purchasedAt = new Date();
 
   return {
-    id: crypto.randomUUID(),
+    id: options.code,
     code: options.code,
     type: options.type,
-    typeLabel: PASSPORT_TYPES[options.type].label,
     discountPercent: PASSPORT_TYPES[options.type].discountPercent,
     clientName: options.clientName,
     clientPhone: options.clientPhone,
-    status: "purchased" as PassportStatus,
+    status: "purchased" satisfies PassportStatus,
     purchasedAt: purchasedAt.toISOString(),
     validFrom: REDEMPTION_WINDOW_START.toISOString(),
     validUntil: REDEMPTION_WINDOW_END.toISOString(),
@@ -113,19 +109,19 @@ function sortNewestFirst(records: PassportStoreRecord[]): PassportStoreRecord[] 
 
 type FirebasePassportDocument = {
   code: string;
-  type: string;
-  discountPercent: number;
-  clientName: string;
-  clientPhone: string;
-  status: string;
-  purchasedAt: Date;
-  validFrom: Date;
-  validUntil: Date;
-  createdByUid?: string | null;
-  createdByEmail?: string | null;
-  redeemedAt?: Date | null;
-  redeemedByEmail?: string | null;
-  promoKey?: string;
+  type: unknown;
+  discountPercent: unknown;
+  clientName: unknown;
+  clientPhone: unknown;
+  status: unknown;
+  purchasedAt: unknown;
+  validFrom: unknown;
+  validUntil: unknown;
+  createdByUid?: unknown;
+  createdByEmail?: unknown;
+  redeemedAt?: unknown;
+  redeemedByEmail?: unknown;
+  promoKey?: unknown;
 };
 
 function toDate(value: unknown): Date {
@@ -140,38 +136,65 @@ function toDate(value: unknown): Date {
   return new Date(value as string | number);
 }
 
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** Valida el documento crudo: estados/tipos corruptos no son canjeables. */
 function fromFirebaseDocument(
   id: string,
   document: FirebasePassportDocument,
-): PassportStoreRecord {
+): PassportStoreRecord | null {
   const type: PassportTypeId = isPassportTypeId(document.type)
     ? document.type
     : "vip";
+  const status: PassportStatus =
+    typeof document.status === "string" && VALID_STATUSES.has(document.status)
+      ? (document.status as PassportStatus)
+      : "void";
+  const code = asString(document.code);
+
+  if (!code) {
+    return null;
+  }
 
   return {
     id,
-    code: document.code,
+    code,
     type,
-    typeLabel: PASSPORT_TYPES[type].label,
-    discountPercent: document.discountPercent ?? PASSPORT_TYPES[type].discountPercent,
-    clientName: document.clientName,
-    clientPhone: document.clientPhone,
-    status: (document.status as PassportStatus) ?? "purchased",
+    discountPercent:
+      typeof document.discountPercent === "number"
+        ? document.discountPercent
+        : PASSPORT_TYPES[type].discountPercent,
+    clientName: asString(document.clientName),
+    clientPhone: asString(document.clientPhone),
+    status,
     purchasedAt: toDate(document.purchasedAt).toISOString(),
     validFrom: toDate(document.validFrom).toISOString(),
     validUntil: toDate(document.validUntil).toISOString(),
-    createdByUid: document.createdByUid ?? null,
-    createdByEmail: document.createdByEmail ?? null,
+    createdByUid: asNullableString(document.createdByUid),
+    createdByEmail: asNullableString(document.createdByEmail),
     redeemedAt: document.redeemedAt ? toDate(document.redeemedAt).toISOString() : null,
-    redeemedByEmail: document.redeemedByEmail ?? null,
-    promoKey: document.promoKey ?? getPromoKey(),
+    redeemedByEmail: asNullableString(document.redeemedByEmail),
+    promoKey: asString(document.promoKey, getPromoKey()),
   };
 }
 
-function getRecordTypeStatus(now: Date, record: PassportStoreRecord): {
+export interface RedeemVerdict {
   canRedeem: boolean;
   reason: string | null;
-} {
+}
+
+/**
+ * El gate se evalúa contra las fechas propias del documento (las que ve la
+ * clienta en su cupón), no contra las globales de entorno: si las ventanas se
+ * reconfiguran tras la emisión, el pasaporte sigue honrando lo impreso.
+ */
+export function getRedeemability(now: Date, record: PassportStoreRecord): RedeemVerdict {
   if (record.status === "redeemed") {
     return { canRedeem: false, reason: "Este pasaporte ya fue canjeado." };
   }
@@ -180,36 +203,47 @@ function getRecordTypeStatus(now: Date, record: PassportStoreRecord): {
     return { canRedeem: false, reason: "Este pasaporte fue anulado." };
   }
 
-  if (now < REDEMPTION_WINDOW_START) {
+  const validFrom = new Date(record.validFrom);
+  const validUntil = new Date(record.validUntil);
+
+  if (now < validFrom) {
     return {
       canRedeem: false,
-      reason: "El canje inicia el 1 de diciembre. El pasaporte es válido, todavía no se puede usar.",
+      reason: "El pasaporte es válido, pero el canje aún no inicia. Revisa la fecha impresa en el cupón.",
     };
   }
 
-  if (now > REDEMPTION_WINDOW_END) {
+  if (now > validUntil) {
     return {
       canRedeem: false,
-      reason: "La ventana de canje finalizó el 31 de diciembre.",
+      reason: "La ventana de canje de este pasaporte ya finalizó.",
     };
   }
 
   return { canRedeem: true, reason: null };
 }
 
-async function listFromFirebase(limit = HISTORY_LIMIT): Promise<PassportRecord[]> {
+async function listFromFirebase(limit = HISTORY_LIMIT): Promise<{
+  passports: PassportRecord[];
+  truncated: boolean;
+}> {
   const snapshot = await getFirebaseAdminFirestore()
     .collection("vipPassports")
     .where("promoKey", "==", getPromoKey())
     .orderBy("purchasedAt", "desc")
-    .limit(limit)
+    .limit(limit + 1)
     .get();
 
-  return snapshot.docs.map((document) =>
-    toPassportRecord(
+  const records = snapshot.docs
+    .map((document) =>
       fromFirebaseDocument(document.id, document.data() as FirebasePassportDocument),
-    ),
-  );
+    )
+    .filter((record): record is PassportStoreRecord => record !== null);
+
+  return {
+    passports: records.slice(0, limit).map(toPassportRecord),
+    truncated: records.length > limit,
+  };
 }
 
 async function findByCodeInFirebase(code: string): Promise<PassportStoreRecord | null> {
@@ -228,62 +262,64 @@ async function findByCodeInFirebase(code: string): Promise<PassportStoreRecord |
   return fromFirebaseDocument(document.id, document.data() as FirebasePassportDocument);
 }
 
+/**
+ * Unicidad atómica: el código ES el ID del documento y se usa `create()`,
+ * que falla si ya existe. Sin check-then-set: dos creates concurrentes con
+ * el mismo código no pueden duplicarlo.
+ */
 async function createPassportInFirebase(
   options: CreatePassportOptions,
 ): Promise<PassportRecord> {
   const firestore = getFirebaseAdminFirestore();
-  const passportsCollection = firestore.collection("vipPassports");
 
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const record = createRecord({
-      ...options,
-      code: generatePassportCode(),
-    });
-    const duplicateSnapshot = await passportsCollection
-      .where("code", "==", record.code)
-      .limit(1)
-      .get();
+  for (let attempt = 0; attempt < CODE_RETRY_ATTEMPTS; attempt += 1) {
+    const record = buildRecord({ ...options, code: generatePassportCode() });
+    const documentRef = firestore.collection("vipPassports").doc(record.code);
 
-    if (!duplicateSnapshot.empty) {
-      continue;
+    try {
+      await documentRef.create({
+        code: record.code,
+        type: record.type,
+        discountPercent: record.discountPercent,
+        clientName: record.clientName,
+        clientPhone: record.clientPhone,
+        status: record.status,
+        purchasedAt: new Date(record.purchasedAt),
+        validFrom: new Date(record.validFrom),
+        validUntil: new Date(record.validUntil),
+        createdByUid: record.createdByUid,
+        createdByEmail: record.createdByEmail,
+        redeemedAt: null,
+        redeemedByEmail: null,
+        promoKey: record.promoKey,
+      });
+
+      return toPassportRecord(record);
+    } catch (error) {
+      const code = (error as { code?: number })?.code;
+
+      if (code === 6) {
+        continue;
+      }
+
+      throw error;
     }
-
-    await passportsCollection.doc(record.id).set({
-      code: record.code,
-      type: record.type,
-      discountPercent: record.discountPercent,
-      clientName: record.clientName,
-      clientPhone: record.clientPhone,
-      status: record.status,
-      purchasedAt: new Date(record.purchasedAt),
-      validFrom: new Date(record.validFrom),
-      validUntil: new Date(record.validUntil),
-      createdByUid: record.createdByUid,
-      createdByEmail: record.createdByEmail,
-      redeemedAt: null,
-      redeemedByEmail: null,
-      promoKey: record.promoKey,
-    });
-
-    return toPassportRecord(record);
   }
 
   throw new Error("No se pudo generar un código único tras varios intentos.");
 }
 
-function createPassportInMemory(
-  options: CreatePassportOptions,
-): PassportRecord {
+function createPassportInMemory(options: CreatePassportOptions): PassportRecord {
   const store = getMemoryStore();
 
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < CODE_RETRY_ATTEMPTS; attempt += 1) {
     const code = generatePassportCode();
 
     if (store.some((record) => record.code === code)) {
       continue;
     }
 
-    const record = createRecord({ ...options, code });
+    const record = buildRecord({ ...options, code });
     store.unshift(record);
 
     return toPassportRecord(record);
@@ -296,20 +332,23 @@ export function isSaleWindowOpen(now = new Date()): boolean {
   return now >= SALE_WINDOW_START && now <= SALE_WINDOW_END;
 }
 
-export async function listPassports(limit = HISTORY_LIMIT): Promise<PassportRecord[]> {
+export async function listPassports(limit = HISTORY_LIMIT): Promise<{
+  passports: PassportRecord[];
+  truncated: boolean;
+}> {
   if (isFirebaseAdminConfigured()) {
     return listFromFirebase(limit);
   }
 
-  return sortNewestFirst(getMemoryStore()).slice(0, limit).map(toPassportRecord);
+  const sorted = sortNewestFirst(getMemoryStore());
+
+  return {
+    passports: sorted.slice(0, limit).map(toPassportRecord),
+    truncated: sorted.length > limit,
+  };
 }
 
-export async function createPassport(options: {
-  type: PassportTypeId;
-  clientName: string;
-  clientPhone: string;
-  sessionUser: SessionUser | null;
-}): Promise<PassportRecord> {
+export async function createPassport(options: CreatePassportOptions): Promise<PassportRecord> {
   if (isFirebaseAdminConfigured()) {
     return createPassportInFirebase(options);
   }
@@ -325,7 +364,7 @@ export async function lookupPassport(
   canRedeem: boolean;
   reason: string | null;
 }> {
-  const code = rawCode.trim().toUpperCase();
+  const code = typeof rawCode === "string" ? rawCode.trim().toUpperCase() : "";
 
   if (!code) {
     return { passport: null, canRedeem: false, reason: "Ingresa un código." };
@@ -343,7 +382,7 @@ export async function lookupPassport(
     };
   }
 
-  const verdict = getRecordTypeStatus(now, record);
+  const verdict = getRedeemability(now, record);
 
   return {
     passport: toPassportRecord(record),
@@ -352,49 +391,75 @@ export async function lookupPassport(
   };
 }
 
-export async function redeemPassport(
-  rawCode: string,
+function toStoreUpdate(
+  record: PassportStoreRecord,
+  redeemedAt: string,
+  redeemedByEmail: string,
+): PassportStoreRecord {
+  return {
+    ...record,
+    status: "redeemed",
+    redeemedAt,
+    redeemedByEmail,
+  };
+}
+
+/**
+ * Canje atómico de un solo uso: la lectura, la validación de estado/ventana
+ * y la escritura ocurren dentro de una transacción Firestore, así que dos
+ * canjes concurrentes no pueden marcar el mismo código.
+ */
+async function redeemPassportInFirebase(
+  code: string,
   sessionUser: SessionUser,
-  now = new Date(),
+  now: Date,
 ): Promise<PassportRecord> {
-  const code = rawCode.trim().toUpperCase();
-  const lookup = await lookupPassport(code, now);
-
-  if (!lookup.passport) {
-    throw new Error(lookup.reason ?? "Pasaporte no encontrado.");
-  }
-
-  if (!lookup.canRedeem) {
-    throw new Error(lookup.reason ?? "El pasaporte no se puede canjear.");
-  }
-
+  const firestore = getFirebaseAdminFirestore();
   const redeemedAt = now.toISOString();
   const redeemedByEmail = sessionUser.email ?? sessionUser.uid;
 
-  if (isFirebaseAdminConfigured()) {
-    const record = await findByCodeInFirebase(code);
+  const updated = await firestore.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(
+      firestore.collection("vipPassports").where("code", "==", code).limit(1),
+    );
 
-    if (!record) {
+    if (snapshot.empty) {
       throw new Error("Pasaporte no encontrado.");
     }
 
-    await getFirebaseAdminFirestore()
-      .collection("vipPassports")
-      .doc(record.id)
-      .update({
-        status: "redeemed" satisfies PassportStatus,
-        redeemedAt: new Date(redeemedAt),
-        redeemedByEmail,
-      });
+    const document = snapshot.docs[0];
+    const record = fromFirebaseDocument(
+      document.id,
+      document.data() as FirebasePassportDocument,
+    );
 
-    return toPassportRecord({
-      ...record,
-      status: "redeemed",
-      redeemedAt,
+    if (!record) {
+      throw new Error("El pasaporte está corrupto y no se puede canjear.");
+    }
+
+    const verdict = getRedeemability(now, record);
+
+    if (!verdict.canRedeem) {
+      throw new Error(verdict.reason ?? "El pasaporte no se puede canjear.");
+    }
+
+    transaction.update(document.ref, {
+      status: "redeemed" satisfies PassportStatus,
+      redeemedAt: new Date(redeemedAt),
       redeemedByEmail,
     });
-  }
 
+    return toStoreUpdate(record, redeemedAt, redeemedByEmail);
+  });
+
+  return toPassportRecord(updated);
+}
+
+function redeemPassportInMemory(
+  code: string,
+  sessionUser: SessionUser,
+  now: Date,
+): PassportRecord {
   const store = getMemoryStore();
   const index = store.findIndex((candidate) => candidate.code === code);
 
@@ -402,14 +467,39 @@ export async function redeemPassport(
     throw new Error("Pasaporte no encontrado.");
   }
 
-  store[index] = {
-    ...store[index],
-    status: "redeemed",
-    redeemedAt,
-    redeemedByEmail,
-  };
+  // Re-validación inmediatamente antes de escribir: sin awaits entre la
+  // lectura y la escritura no hay interleaving posible.
+  const current = store[index];
+  const verdict = getRedeemability(now, current);
+
+  if (!verdict.canRedeem) {
+    throw new Error(verdict.reason ?? "El pasaporte no se puede canjear.");
+  }
+
+  const redeemedAt = now.toISOString();
+  const redeemedByEmail = sessionUser.email ?? sessionUser.uid;
+
+  store[index] = toStoreUpdate(current, redeemedAt, redeemedByEmail);
 
   return toPassportRecord(store[index]);
+}
+
+export async function redeemPassport(
+  rawCode: string,
+  sessionUser: SessionUser,
+  now = new Date(),
+): Promise<PassportRecord> {
+  const code = typeof rawCode === "string" ? rawCode.trim().toUpperCase() : "";
+
+  if (!code) {
+    throw new Error("Ingresa un código.");
+  }
+
+  if (isFirebaseAdminConfigured()) {
+    return redeemPassportInFirebase(code, sessionUser, now);
+  }
+
+  return redeemPassportInMemory(code, sessionUser, now);
 }
 
 export function getPassportStorageMode(): StorageMode {
