@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Códigos De Gol | Súa Hair Salon",
+  title: "Pasaportes VIP | Blackend Week | Súa Hair Salon",
   description:
-    "Cupones en vivo activados por cada gol para Súa Hair Salon, con panel administrativo para publicación y verificación.",
+    "Gestión interna de Pasaportes VIP de Blackend Week para Súa Hair Salon: venta, entrega por WhatsApp y canje en tienda.",
 };
 
 export default function RootLayout({

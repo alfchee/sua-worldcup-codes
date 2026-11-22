@@ -1,5 +1,5 @@
-import { PublicCouponBoard } from "@/components/public-coupon-board";
+import { redirect } from "next/navigation";
 
-export default function Home() {
-  return <PublicCouponBoard />;
+export default function HomePage() {
+  redirect("/admin");
 }

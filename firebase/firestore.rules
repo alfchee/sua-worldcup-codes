@@ -20,6 +20,14 @@ service cloud.firestore {
       allow create, update, delete: if hasRole('admin');
     }
 
+    match /vipPassports/{passportId} {
+      allow read: if isStaffOrAdmin();
+      allow create: if isStaffOrAdmin();
+      // El canje (update) y el resto de cambios sensibles pasan por el Admin SDK,
+      // que verifica el rol en el código de servidor; el cliente no actualiza directo.
+      allow update, delete: if false;
+    }
+
     match /users/{userId} {
       allow read: if signedIn() && (request.auth.uid == userId || hasRole('admin'));
       allow write: if hasRole('admin');

@@ -7,22 +7,30 @@ export type AuthProviderId =
   | "microsoft"
   | "apple";
 
-export interface CouponRecord {
-  id: string;
-  code: string;
-  createdAt: string;
-  expiresAt: string;
-}
+export type PassportTypeId = "blackend" | "vip";
+export type PassportStatus = "purchased" | "redeemed" | "void";
 
-export interface CouponStoreRecord {
+export interface PassportRecord {
   id: string;
   code: string;
-  createdAt: string;
-  expiresAt: string;
+  type: PassportTypeId;
+  typeLabel: string;
+  discountPercent: number;
+  clientName: string;
+  clientPhone: string;
+  status: PassportStatus;
+  purchasedAt: string;
+  validFrom: string;
+  validUntil: string;
   createdByUid: string | null;
   createdByEmail: string | null;
-  eventKey: string;
+  redeemedAt: string | null;
+  redeemedByEmail: string | null;
+  promoKey: string;
 }
+
+// Representación interna de la capa de almacenamiento; la forma coincide con PassportRecord.
+export type PassportStoreRecord = PassportRecord;
 
 export interface SessionUser {
   uid: string;
@@ -32,24 +40,39 @@ export interface SessionUser {
   providers: string[];
 }
 
-export interface PublicCouponsResponse {
-  now: string;
-  coupons: CouponRecord[];
-  storageMode: StorageMode;
-}
-
-export interface AdminCouponsResponse {
-  coupons: CouponRecord[];
+export interface AdminPassportsResponse {
+  passports: PassportRecord[];
   storageMode: StorageMode;
   sessionUser: SessionUser;
+  now: string;
 }
 
-export interface PublishCouponResponse {
-  coupon: CouponRecord;
+export interface CreatePassportResponse {
+  passport: PassportRecord;
   storageMode: StorageMode;
+}
+
+export interface LookupPassportResponse {
+  passport: PassportRecord | null;
+  canRedeem: boolean;
+  reason: string | null;
+  now: string;
+}
+
+export interface RedeemPassportResponse {
+  passport: PassportRecord;
+  now: string;
 }
 
 export interface SessionResponse {
   authenticated: boolean;
   user: SessionUser | null;
+}
+
+export interface RedemptionWindowInfo {
+  saleStart: string;
+  saleEnd: string;
+  redemptionStart: string;
+  redemptionEnd: string;
+  now: string;
 }

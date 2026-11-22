@@ -1,13 +1,66 @@
-import type { AuthProviderId, StorageMode } from "@/lib/types";
+import type { AuthProviderId, PassportTypeId, StorageMode } from "@/lib/types";
 
 export const SESSION_COOKIE_NAME =
   process.env.FIREBASE_SESSION_COOKIE_NAME?.trim() || "worldcup-session";
-export const COUPON_CODE_LENGTH = 5;
-export const COUPON_TTL_MS = 2 * 60 * 1000;
-export const PUBLIC_POLL_INTERVAL_MS = 5_000;
-export const HISTORY_LIMIT = 12;
+export const PASSPORT_CODE_LENGTH = 6;
+export const HISTORY_LIMIT = 50;
 export const SESSION_DURATION_MS = 1000 * 60 * 60 * 12;
-export const DEFAULT_EVENT_KEY = "world-cup-day-finale-2026";
+export const DEFAULT_PROMO_KEY = "blackend-week-vip-2026";
+
+/**
+ * Ventana de venta: los pasaportes solo pueden emitirse en este rango.
+ * Ventana de canje: solo pueden usarse en el salón dentro de este rango.
+ * Ambas se pueden sobrescribir con variables de entorno (ISO 8601 con zona).
+ */
+export const SALE_WINDOW_START = getEnvDate(
+  process.env.PROMO_SALE_START,
+  "2026-11-23T00:00:00-06:00",
+);
+export const SALE_WINDOW_END = getEnvDate(
+  process.env.PROMO_SALE_END,
+  "2026-11-28T23:59:59-06:00",
+);
+export const REDEMPTION_WINDOW_START = getEnvDate(
+  process.env.PROMO_REDEMPTION_START,
+  "2026-12-01T00:00:00-06:00",
+);
+export const REDEMPTION_WINDOW_END = getEnvDate(
+  process.env.PROMO_REDEMPTION_END,
+  "2026-12-31T23:59:59-06:00",
+);
+
+export const PASSPORT_TYPES: Record<
+  PassportTypeId,
+  { label: string; shortLabel: string; discountPercent: number }
+> = {
+  blackend: {
+    label: "Pasaporte VIP Blackend",
+    shortLabel: "BLACKEND VIP",
+    discountPercent: 50,
+  },
+  vip: {
+    label: "Pasaporte VIP",
+    shortLabel: "VIP",
+    discountPercent: 40,
+  },
+};
+
+function getEnvDate(rawValue: string | undefined, fallback: string): Date {
+  const parsed = rawValue ? new Date(rawValue) : new Date(fallback);
+  return Number.isNaN(parsed.getTime()) ? new Date(fallback) : parsed;
+}
+
+export function isPassportTypeId(value: unknown): value is PassportTypeId {
+  return value === "blackend" || value === "vip";
+}
+
+export function getPassportType(typeId: PassportTypeId) {
+  return PASSPORT_TYPES[typeId];
+}
+
+export function getPromoKey(): string {
+  return process.env.PROMO_KEY?.trim() || DEFAULT_PROMO_KEY;
+}
 
 function hasValue(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
@@ -36,10 +89,6 @@ export function isFirebaseConfigured(): boolean {
 
 export function getStorageMode(): StorageMode {
   return isFirebaseAdminConfigured() ? "firebase" : "memory";
-}
-
-export function getEventKey(): string {
-  return process.env.EVENT_KEY?.trim() || DEFAULT_EVENT_KEY;
 }
 
 export function getConfiguredAuthProviders(): AuthProviderId[] {
